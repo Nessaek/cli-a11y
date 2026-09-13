@@ -1,0 +1,138 @@
+#!/usr/bin/env node
+'use strict';
+
+const { audit, report } = require('../src/index');
+const pkg = require('../package.json');
+
+const USAGE = `Usage: cli-a11y [options] -- <command> [args...]
+       cli-a11y [options] <command> [args...]
+
+Runs <command> under a range of terminal conditions and grades how usable the
+result is for people using a screen reader, a magnifier, a high-contrast theme,
+voice control, switch access, or plain unfamiliarity.
+
+Options:
+  --cmd "<args>"        An extra invocation to exercise, on top of --help and
+                        --version. Repeatable. Use it to reach the real work:
+                        progress bars and prompts rarely appear in help text.
+  --fail-on <level>     Exit non-zero at this severity or worse.
+                        critical | serious | moderate | minor | none
+                        (default: serious)
+  --json                Emit the full report as JSON instead of text.
+  --quiet               Show only the failures, not the checks that passed.
+  --timeout <ms>        Per-probe timeout (default: 10000).
+  --cwd <dir>           Working directory for the target.
+  --help-flag <flag>    Flag that prints help (default: --help).
+  --version-flag <flag> Flag that prints the version (default: --version).
+  --no-color            Never colour this report.
+  -h, --help            Show this help.
+  -V, --version         Show the version of cli-a11y itself.
+
+Examples:
+  $ cli-a11y -- git status
+  $ cli-a11y --cmd "install --dry-run" --fail-on moderate -- npm
+  $ cli-a11y --json -- ./my-tool > report.json
+
+Exit codes:
+  0  nothing at or above the --fail-on severity
+  1  findings at or above that severity
+  2  cli-a11y could not run the target at all
+`;
+
+function parseArgs(argv) {
+  const opts = {
+    extra: [], failOn: 'serious', json: false, quiet: false,
+    timeout: 10000, cwd: process.cwd(),
+    helpFlag: '--help', versionFlag: '--version', color: undefined,
+  };
+  const rest = [];
+  let i = 0;
+  let separatorSeen = false;
+
+  const need = (flag) => {
+    const v = argv[++i];
+    if (v === undefined) {
+      process.stderr.write(`cli-a11y: ${flag} needs a value\n`);
+      process.exit(2);
+    }
+    return v;
+  };
+
+  for (; i < argv.length; i++) {
+    const a = argv[i];
+    if (separatorSeen) { rest.push(a); continue; }
+    if (a === '--') { separatorSeen = true; continue; }
+    // Once the target command has started, everything belongs to it.
+    if (rest.length) { rest.push(a); continue; }
+
+    if (a === '-h' || a === '--help') { process.stdout.write(USAGE); process.exit(0); }
+    else if (a === '-V' || a === '--version') { process.stdout.write(`${pkg.version}\n`); process.exit(0); }
+    else if (a === '--json') opts.json = true;
+    else if (a === '--quiet') opts.quiet = true;
+    else if (a === '--no-color') opts.color = false;
+    else if (a === '--color') opts.color = true;
+    else if (a === '--cmd') {
+      const raw = need('--cmd');
+      opts.extra.push({ label: raw, args: raw.split(/\s+/).filter(Boolean) });
+    }
+    else if (a === '--fail-on') opts.failOn = need('--fail-on');
+    else if (a === '--timeout') opts.timeout = Number(need('--timeout'));
+    else if (a === '--cwd') opts.cwd = need('--cwd');
+    else if (a === '--help-flag') opts.helpFlag = need('--help-flag');
+    else if (a === '--version-flag') opts.versionFlag = need('--version-flag');
+    else if (a.startsWith('-') && a.length > 1) {
+      process.stderr.write(`cli-a11y: unknown option ${a}\nTry: cli-a11y --help\n`);
+      process.exit(2);
+    } else rest.push(a);
+  }
+
+  const levels = ['critical', 'serious', 'moderate', 'minor', 'none'];
+  if (!levels.includes(opts.failOn)) {
+    process.stderr.write(`cli-a11y: --fail-on must be one of ${levels.join(', ')}, got "${opts.failOn}"\n`);
+    process.exit(2);
+  }
+  if (!Number.isFinite(opts.timeout) || opts.timeout < 500) {
+    process.stderr.write('cli-a11y: --timeout must be a number of milliseconds, at least 500\n');
+    process.exit(2);
+  }
+  return { opts, rest };
+}
+
+async function main() {
+  const { opts, rest } = parseArgs(process.argv.slice(2));
+  if (!rest.length) {
+    process.stderr.write('cli-a11y: no command given.\n\n' + USAGE);
+    process.exit(2);
+  }
+
+  const target = { cmd: rest[0], args: rest.slice(1) };
+  const isTty = Boolean(process.stderr.isTTY);
+
+  const result = await audit(target, {
+    ...opts,
+    onProgress: (id, done, total) => {
+      // One line per probe, never redrawn in place: this tool does not get to
+      // fail its own animation check.
+      if (isTty && !opts.json) process.stderr.write(`  probe ${done}/${total}: ${id}\n`);
+    },
+  });
+
+  // The terminal probes go through script(1), which happily succeeds while the
+  // shell inside it reports "command not found". Only the direct spawn of the
+  // piped probe surfaces a missing binary as a real error.
+  const failedToStart = [result.probes.helpPipe, result.probes.help]
+    .find((p) => p && p.error);
+  if (failedToStart) {
+    process.stderr.write(`cli-a11y: could not run "${target.cmd}": ${failedToStart.error}\n`
+      + 'Check the name, or pass the full path to the executable.\n');
+    process.exit(2);
+  }
+
+  process.stdout.write(opts.json ? `${report.toJson(result)}\n` : report.render(result, opts));
+  process.exit(report.shouldFail(result.findings, opts.failOn) ? 1 : 0);
+}
+
+main().catch((err) => {
+  process.stderr.write(`cli-a11y: ${err && err.stack ? err.stack : err}\n`);
+  process.exit(2);
+});
