@@ -23,7 +23,13 @@ The thing that decided the design was realising that piping a CLI's output tells
 Go 1.24+. One dependency, [`creack/pty`](https://github.com/creack/pty).
 
 ```bash
-go build -o cli-a11y .
+go install github.com/Nessaek/cli-a11y/cmd/cli-a11y@latest
+```
+
+Or from a checkout:
+
+```bash
+go build -o cli-a11y ./cmd/cli-a11y
 ```
 
 ```bash
@@ -75,7 +81,7 @@ Every check reads from a fixed set of recorded runs. Nothing spawns the target o
 
 `go test ./...` pins every rule to two fixtures: `internal/fixture/bad`, which commits each fault deliberately, and `internal/fixture/good`, which is the same tool built the other way round. A rule has to fire on one and clear on the other. A rule that can't tell them apart is worse than no rule, because it spends the reader's attention on nothing.
 
-The suite also audits `cli-a11y` itself and fails if it doesn't come back clean. The report honours `NO_COLOR`, pairs every colour with a word, prints one line per probe rather than redrawing, and uses no faint text anywhere.
+The suite also audits `cli-a11y` itself and fails if it doesn't come back clean. CI runs it under the race detector on Linux and macOS, against Go 1.24 and the current release — both platforms, because a closed pty reads as EOF on one and EIO on the other. The report honours `NO_COLOR`, pairs every colour with a word, prints one line per probe rather than redrawing, and uses no faint text anywhere.
 
 Pointing it at real tools is how the rules actually get fixed, and it is worth doing before trusting any number it produces. `git` scores 85: it ignores the terminal width, overflows at 40 columns, and its top-level help lists flags only inside the usage synopsis with no navigable options section. `gcloud` scores 90, the remaining findings being a spinner, narrow-terminal overflow and a pager.
 

@@ -32,7 +32,7 @@ func TestMain(m *testing.M) {
 		}
 		return out
 	}
-	bin = build("cli-a11y", "github.com/Nessaek/cli-a11y")
+	bin = build("cli-a11y", "github.com/Nessaek/cli-a11y/cmd/cli-a11y")
 	badBin = build("bad", "github.com/Nessaek/cli-a11y/internal/fixture/bad")
 	goodBin = build("good", "github.com/Nessaek/cli-a11y/internal/fixture/good")
 
