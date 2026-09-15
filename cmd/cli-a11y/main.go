@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -15,8 +16,20 @@ import (
 	"github.com/Nessaek/cli-a11y/internal/report"
 )
 
-// Version is the tool's own version, overridable at build time.
-var Version = "0.2.0"
+// Version is the tool's own version. Release builds can set it with
+// -ldflags "-X main.Version=..."; otherwise it comes from the module version
+// recorded by go install.
+var Version = ""
+
+func version() string {
+	if Version != "" {
+		return Version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "(devel)"
+}
 
 const usage = `Usage: cli-a11y [options] -- <command> [args...]
        cli-a11y [options] <command> [args...]
@@ -107,7 +120,7 @@ func parseArgs(argv []string) (options, []string) {
 			fmt.Print(usage)
 			os.Exit(0)
 		case "-V", "--version":
-			fmt.Println(Version)
+			fmt.Println(version())
 			os.Exit(0)
 		case "--json":
 			o.json = true
@@ -191,7 +204,10 @@ func main() {
 
 	// The pty probes go through a pseudo-terminal that reports its own errors,
 	// but only the direct spawn of the piped probe surfaces a missing binary.
-	for _, id := range []string{"helpPipe", "help"} {
+	// Only the piped probe can say the binary is missing. A terminal probe can
+	// also fail because no pty could be opened, and that must degrade to a
+	// partial report, not stop the audit.
+	for _, id := range []string{"helpPipe"} {
 		if p := set.Get(id); p != nil && p.Err != "" {
 			fmt.Fprintf(os.Stderr, "cli-a11y: could not run %q: %s\n", target.Cmd, p.Err)
 			fmt.Fprintln(os.Stderr, "Check the name, or pass the full path to the executable.")
@@ -200,7 +216,14 @@ func main() {
 	}
 
 	findings := check.All(set)
-	res := report.Result{Target: target, Findings: findings, Meta: set.Meta, PTY: true}
+	pty := false
+	for _, p := range set.Results {
+		if p.TTY && p.OK() {
+			pty = true
+			break
+		}
+	}
+	res := report.Result{Target: target, Findings: findings, Meta: set.Meta, PTY: pty}
 
 	if o.json {
 		out, err := report.JSON(res)

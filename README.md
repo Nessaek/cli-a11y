@@ -12,9 +12,9 @@ It reports findings by severity, exits non-zero when anything serious turns up, 
 
 The failures are not exotic — a red `FAILED` with no word attached, a spinner that a screen reader re-announces forty times a second, faint grey hints at 3:1 contrast, a prompt with no `--yes`. Every one of those is mechanically detectable.
 
-People have done this work, but by hand. [GitHub rebuilt the `gh` prompts](https://github.blog/engineering/user-experience/building-a-more-accessible-github-cli/) on an accessible prompting library, swapped spinners for static progress text and moved to a customisable 4-bit palette; `gcloud` ships an [`accessibility/screen_reader` property](https://docs.cloud.google.com/sdk/docs/enabling-accessibility-features) that flattens unicode tables and replaces spinners. Neither shipped a checker. Search for "CLI accessibility tool" and you get web auditors that happen to run in a terminal — pa11y, axe-core — which is the inverse of this.
+People have done this work, but by hand. [GitHub rebuilt the `gh` prompts](https://github.blog/engineering/user-experience/building-a-more-accessible-github-cli/) on an accessible prompting library, swapped spinners for static progress text and moved to a customisable 4-bit palette, all behind `gh a11y`; `gcloud` ships an [`accessibility/screen_reader` property](https://docs.cloud.google.com/sdk/docs/enabling-accessibility-features) that flattens unicode tables and replaces spinners. Both are opt-in modes, and neither came with a checker. Search for "CLI accessibility tool" and you get web auditors that happen to run in a terminal — pa11y, axe-core — which is the inverse of this.
 
-What does exist is a family of PTY test harnesses: [termlens](https://github.com/vyncint/termlens), [microsoft/tui-test](https://github.com/microsoft/tui-test), `ratatui-testlib`. They spawn a binary on a real pty and render its output through a VT emulator so you can assert on the screen a user would see. None of them carries accessibility rules — they are the layer underneath this, and a more rigorous one than the terminal emulation here. See [What it can't do](#what-it-cant-do).
+What does exist is a family of PTY test harnesses: [termlens](https://github.com/vyncint/termlens), [microsoft/tui-test](https://github.com/microsoft/tui-test), [ratatui-testlib](https://github.com/raibid-labs/ratatui-testlib). They spawn a binary on a real pty and render its output through a VT emulator so you can assert on the screen a user would see. None of them carries accessibility rules — they are the layer underneath this, and a more rigorous one than the terminal emulation here. See [What it can't do](#what-it-cant-do).
 
 The thing that decided the design was realising that piping a CLI's output tells you almost nothing. Most tools suppress colour, spinners and prompts the moment stdout stops being a terminal, so a pipe-based checker grades output that no terminal user ever sees. The faults live on the terminal path specifically, which means the checker has to run the tool on a real pty.
 
@@ -81,7 +81,7 @@ Every check reads from a fixed set of recorded runs. Nothing spawns the target o
 
 `go test ./...` pins every rule to two fixtures: `internal/fixture/bad`, which commits each fault deliberately, and `internal/fixture/good`, which is the same tool built the other way round. A rule has to fire on one and clear on the other. A rule that can't tell them apart is worse than no rule, because it spends the reader's attention on nothing.
 
-The suite also audits `cli-a11y` itself and fails if it doesn't come back clean. CI runs it under the race detector on Linux and macOS, against Go 1.24 and the current release — both platforms, because a closed pty reads as EOF on one and EIO on the other. The report honours `NO_COLOR`, pairs every colour with a word, prints one line per probe rather than redrawing, and uses no faint text anywhere.
+The suite also audits `cli-a11y` itself — its help, version, error handling and bare invocation — and fails if any of it comes back serious. That does not exercise the report it prints, which is held to the same rules by hand. CI runs the suite under the race detector on Linux and macOS, against Go 1.24 and the current release — both platforms, because a closed pty reads as EOF on one and EIO on the other. The report honours `NO_COLOR`, pairs every colour with a word, prints one line per probe rather than redrawing, and uses no faint text anywhere.
 
 Pointing it at real tools is how the rules actually get fixed, and it is worth doing before trusting any number it produces. `git` scores 85: it ignores the terminal width, overflows at 40 columns, and its top-level help lists flags only inside the usage synopsis with no navigable options section. `gcloud` scores 90, the remaining findings being a spinner, narrow-terminal overflow and a pager.
 
@@ -97,7 +97,7 @@ cli-a11y --cmd "components list" -- gcloud
 CLOUDSDK_ACCESSIBILITY_SCREEN_READER=1 cli-a11y --cmd "components list" -- gcloud
 ```
 
-One finding clears: `V-GLYPHS`, as 679 box-drawing characters become zero. Nothing else moves. With accessibility mode on, `gcloud` still ignores the terminal width, still overflows at 40 columns, and repaints *more* in place rather than less. A documented accessibility mode is not the same as an accessible tool, and the checks can tell the difference.
+One finding clears: `V-GLYPHS`, as 679 box-drawing characters become zero, and the score goes from 82 to 86. Nothing else moves. With accessibility mode on, `gcloud` still ignores the terminal width, still overflows at 40 columns, and still redraws in place. A documented accessibility mode is not the same as an accessible tool, and the checks can tell the difference.
 
 ## What it can't do
 

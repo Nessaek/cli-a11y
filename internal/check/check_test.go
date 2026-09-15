@@ -226,3 +226,84 @@ func TestIsPagingSurvivesACleanPagerShutdown(t *testing.T) {
 		t.Error("a run that exited on its own should never count as paging")
 	}
 }
+
+// Where no pty can be opened, every rule that needs terminal output must say
+// "not checked". A pass here would be the audit vouching for a probe that
+// never ran.
+func TestNoPtyMeansNotCheckedRatherThanPassed(t *testing.T) {
+	const help = "Usage: tool [options]\n\nOptions:\n  --json  machine output\n  --yes   no prompts\n"
+	noPty := func(id string) *run.Result {
+		return &run.Result{ID: id, TTY: true, Err: "no pty available"}
+	}
+	piped := func(id, out string) *run.Result {
+		return &run.Result{ID: id, Stdout: out, Raw: out, Output: out}
+	}
+
+	set := &probe.Set{Results: map[string]*run.Result{}}
+	for _, name := range []string{"help", "bare"} {
+		f := probe.Family{Name: name, TTY: name, Pipe: name + "Pipe", NoColor: name + "NoColor",
+			Dumb: name + "Dumb", Narrow: name + "Narrow", Wide: name + "Wide"}
+		for _, id := range []string{f.TTY, f.NoColor, f.Dumb, f.Narrow, f.Wide} {
+			set.Results[id] = noPty(id)
+		}
+		out := ""
+		if name == "help" {
+			out = help
+		}
+		set.Results[f.Pipe] = piped(f.Pipe, out)
+		set.Meta.Families = append(set.Meta.Families, f)
+	}
+	set.Results["version"] = noPty("version")
+	set.Results["badFlag"] = &run.Result{ID: "badFlag", Code: 2,
+		Stderr: "unknown flag --cli-a11y-nonexistent-flag, see --help", Raw: "unknown flag --cli-a11y-nonexistent-flag, see --help"}
+	set.Meta.BadFlag, set.Meta.HelpFlag, set.Meta.VersionFlag = probe.BadFlag, "--help", "--version"
+	set.Meta.NarrowCols, set.Meta.WideCols = probe.NarrowCols, probe.WideCols
+
+	for _, f := range All(set) {
+		// Only the piped check can be judged without a terminal.
+		if !strings.HasPrefix(f.ID, "V-") || f.ID == "V-PIPE-COLOUR" {
+			continue
+		}
+		if f.Passed() {
+			t.Errorf("%s passed with no terminal output to judge: %s", f.ID, f.Detail)
+		}
+	}
+}
+
+// The gcloud regressions. Each of these was a false positive against a real,
+// well-behaved tool.
+
+func TestQuietCountsAsANonInteractiveFlag(t *testing.T) {
+	help := "  --quiet, -q   Disable all interactive prompts when running gcloud commands."
+	if len(mentions(help, batchFlags)) == 0 {
+		t.Error("--quiet is how gcloud and apt spell non-interactive, and should be recognised")
+	}
+}
+
+func TestErrorPointingAtAHelpCommandIsActionable(t *testing.T) {
+	msg := "ERROR: (gcloud) unrecognized arguments: --x\n\nTo search the help text of gcloud commands, run:\n  gcloud help -- SEARCH_TERMS"
+	if !pointsOnRe.MatchString(msg) {
+		t.Error("an error that names a help command does point the user somewhere")
+	}
+	if pointsOnRe.MatchString("Something went wrong.") {
+		t.Error("an error with no pointer at all should not count as actionable")
+	}
+}
+
+func TestTerminalStateIsNotBlamedOnAProcessWeKilled(t *testing.T) {
+	// Hidden cursor, never restored — but only because the timeout killed the
+	// process before its own cleanup could run.
+	killed := "\x1b[?25l\x1b[?1049hwaiting:"
+	set := &probe.Set{Results: map[string]*run.Result{
+		"help": {ID: "help", TTY: true, TimedOut: true, Raw: killed, Output: killed},
+	}}
+	if f := checkTerminalState(set); !f.Passed() {
+		t.Errorf("killed process was blamed for terminal state: %s", f.Detail)
+	}
+
+	// The same bytes from a process that exited on its own are a real fault.
+	set.Results["help"].TimedOut = false
+	if f := checkTerminalState(set); !f.Failed() {
+		t.Error("a process that exited leaving the cursor hidden should fail")
+	}
+}

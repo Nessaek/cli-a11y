@@ -240,8 +240,7 @@ func Parse(raw string) Parsed {
 					j++
 				}
 				if j >= len(raw) {
-					i = len(raw)
-					break
+					break // unterminated sequence at the end of the stream
 				}
 				body := raw[start:j]
 				final := raw[j]

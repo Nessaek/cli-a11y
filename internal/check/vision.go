@@ -157,6 +157,9 @@ func checkPipeColour(s *probe.Set) Finding {
 
 // NO_COLOR and TERM=dumb are the same check against a different switch.
 func checkColourSwitch(s *probe.Set, id, title, label string, sev Severity, pick func(probe.Family) string, detail, remedy string) Finding {
+	if f, skipped := needsTty(s, id, title); skipped {
+		return f
+	}
 	coloured := colouredFamilies(s)
 	if len(coloured) == 0 {
 		return skip(id, Vision, title,

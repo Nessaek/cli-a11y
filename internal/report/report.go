@@ -190,6 +190,11 @@ func Render(r Result, o Options) string {
 	line(fmt.Sprintf("Score %s — %s", c.bold(fmt.Sprintf("%d/100", total)), Grade(total)))
 	line(fmt.Sprintf("%d critical, %d serious, %d moderate, %d minor, %d passed, %d not applicable",
 		counts.Critical, counts.Serious, counts.Moderate, counts.Minor, counts.Pass, counts.Skip))
+	if !r.PTY {
+		line("")
+		lines(wrapText("Note: no pseudo-terminal could be opened, so every terminal probe was skipped. "+
+			"Only piped behaviour was graded, which misses most colour and animation faults.", width, ""))
+	}
 
 	for _, d := range dimensions {
 		var group []check.Finding
