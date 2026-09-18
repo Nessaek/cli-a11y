@@ -127,3 +127,19 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// A target that prints a little and exits at once can finish before the reader
+// goroutine has read anything. Closing the pty at that point threw the output
+// away, which is how a busy CI runner saw the good fixture emit no colour at
+// all. The output is still sitting in the pty's buffer, so the runner has to
+// drain it before closing.
+func TestOutputSurvivesASlowReader(t *testing.T) {
+	orig := readerStarting
+	readerStarting = func() { time.Sleep(2 * time.Second) }
+	defer func() { readerStarting = orig }()
+
+	r := Run("printf", []string{"line one\nline two\n"}, Options{TTY: true, Timeout: 4 * time.Second})
+	if !strings.Contains(r.Output, "line two") {
+		t.Errorf("output lost when the reader started late: %q", r.Output)
+	}
+}
